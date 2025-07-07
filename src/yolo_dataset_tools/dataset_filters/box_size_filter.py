@@ -10,6 +10,7 @@ from ..models.yolo import DatasetInfo, ImageInfo
 
 @dataclass
 class RelBoxSizeRanges:
+    class_name: str
     wn_min: float = 0.0
     wn_max: float = 1.0
     hn_min: float = 0.0
@@ -36,6 +37,7 @@ class RelBoxSizeRanges:
 # TODO pydantic
 @dataclass
 class AbsBoxSizeRanges:
+    class_name: str
     wn_min: int = 0
     wn_max: int = 0
     hn_min: int = 0
@@ -62,7 +64,7 @@ class AbsBoxSizeRanges:
 class BoxSizeFilter(BaseFilter):
     def __init__(
         self,
-        size_ranges: Dict[str, Union[RelBoxSizeRanges, AbsBoxSizeRanges]],
+        size_ranges: List[Union[RelBoxSizeRanges, AbsBoxSizeRanges]],
     ) -> None:
         """
         :param size_ranges: box size limits dict with format:
@@ -71,21 +73,27 @@ class BoxSizeFilter(BaseFilter):
         self.size_ranges = size_ranges
 
     def set_rules(self, dataset_info: DatasetInfo) -> None:
-        extra = set(self.size_ranges.keys()) - set(dataset_info.names)
+        class_names = [sr.class_name for sr in self.size_ranges]
+        extra = set(class_names) - set(dataset_info.names)
         if extra:
             extra = ",".join(extra)
             raise NameError(f"{extra} is not present in the output subset")
 
-        for name, size_range in self.size_ranges.items():
-            if not size_range.validate():
-                raise ValueError(f"Incorrect range for class '{name}'")
+        for sr in self.size_ranges:
+            if not sr.validate():
+                raise ValueError(
+                    f"Incorrect range for class '{sr.class_name}'"
+                )
 
         # build rules dict: {0: BoxSizeRanges(),...}
         class_dict = {name: idx for idx, name in enumerate(dataset_info.names)}
-        self.rules = {
-            class_dict[name]: ranges
-            for name, ranges in self.size_ranges.items()
-        }
+        self.rules = dict()
+        for size_range in self.size_ranges:
+            if self.rules.get(class_dict[size_range.class_name], None):
+                raise RuntimeError(
+                    f"Duplicate description for '{size_range.class_name}'"
+                )
+            self.rules[class_dict[size_range.class_name]] = size_range
         self.rule_classes_ids = self.rules.keys()
 
     def transform_dataset_info(self, dataset_info: DatasetInfo) -> DatasetInfo:
